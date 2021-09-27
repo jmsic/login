@@ -5,8 +5,9 @@ const bodyParser = require('body-parser');
 const ejs = require('ejs');
 const mongoose = require('mongoose');
 const request = require('request');
-const encrypt = require('mongoose-encryption');
-
+const session = require('express-session');
+const passport = require('passport');
+const passportLocalMongoose = require('passport-local-mongoose');
 
 
 const app = express();
@@ -15,22 +16,33 @@ app.use(express.static("public"));
 app.set('view engine', 'ejs');
 app.use(bodyParser.urlencoded({ extended: true }))
 
-mongoose.connect("mongodb://localhost:27017/userDB",  {useUnifiedTopology: true});
+app.use(session({
+  secret: 'keyboard cat',
+  resave: false,
+  saveUninitialized: false  
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+mongoose.connect("mongodb://localhost:27017/userDB",  {
+	useUnifiedTopology: true
+	});
+
 
 const userSchema = new mongoose.Schema({
 	email: String,
 	password:String,	
 });
 
+userSchema.plugin(passportLocalMongoose);
 
-userSchema.plugin(encrypt, { secret: process.env.SECRET , encryptedFields: ['password'] });
+const User = new mongoose.model("User", userSchema);
 
+passport.use(User.createStrategy());
 
-const User = new mongoose.model("User", userSchema)
-
-
-
-
+passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());
 
 app.get("/", function(req, res){
 	res.render('home')
@@ -44,49 +56,66 @@ app.get("/register", function(req, res){
 	res.render('register')
 })
 
+app.get('/logout', function(req, res){
+  req.logout();
+  res.redirect('/');
+});
 
+// app.get("/media", function(req, res){
+// 	request('https://v1.nocodeapi.com/jmsic11/vimeo/IBAqeAQchKArsDIu/videos', { json: true }, (err, r, body) => {
+// 		if (err) { return console.log(err); }
+// 		// console.log(body.data[0].embed.html);
+// 			res.render("media", {
+// 			startingContent: body.data,	      
+// 		});	  
+// 	});
+// })
 
 app.get("/media", function(req, res){
-	request('https://v1.nocodeapi.com/jmsic11/vimeo/IBAqeAQchKArsDIu/videos', { json: true }, (err, r, body) => {
-		if (err) { return console.log(err); }
-		// console.log(body.data[0].embed.html);
-			res.render("media", {
-			startingContent: body.data,	      
-		});	  
-	});
+	if (req.isAuthenticated()){
+		request('https://v1.nocodeapi.com/jmsic11/vimeo/IBAqeAQchKArsDIu/videos', { json: true }, (err, r, body) => {
+			if (err) { return console.log(err); }
+			// console.log(body.data[0].embed.html);
+				res.render("media", {
+				startingContent: body.data,	      
+			});	  
+		});
+	} else {
+		res.redirect('login');
+	}
 })
 
 
 
 app.post("/register", function(req, res){
-	const newUser = new User({
-		email:req.body.username,
-		password:req.body.password
-	});
 
-	newUser.save(function(err){
-		if (err) {
+	User.register({username:req.body.username}, req.body.password, function(err, user) {
+		if (err){
 			console.log(err);
+			res.redirect('/register');
 		} else {
-			res.render('secrets')
+			passport.authenticate("local")(req, res, function(){
+				res.redirect("media");
+			});	
 		}
 	});
 });
 
 
 app.post("/login", function(req, res){
-	const username = req.body.username;
-	const password = req.body.password;
 
-	User.findOne({email:username}, function(err, foundUser){
+	const user = new User({
+		username:req.body.username,
+		password:req.body.password,
+	});
+
+	req.login(user, function(err){
 		if (err){
-			console.log(err)
-		} else {
-			if (foundUser) {
-				if (foundUser.password === password){
-					res.render('secrets')
-				}
-			}
+			console.log(err);
+		}else{
+			passport.authenticate("local")(req, res, function(){
+				res.redirect("media");
+			});
 		}
 	})
 })
